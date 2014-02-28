@@ -1,0 +1,1138 @@
+﻿
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>堆场3D模型</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <style>
+        body {
+            font-family: Monospace;
+            background-color: #f0f0f0;
+            margin: 0px;
+            overflow: hidden;
+        }
+        /*阻塞框的样式*/
+        #blocker {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+        }
+
+        #instructions {
+            width: 100%;
+            height: 100%;
+            display: -webkit-box;
+            display: -moz-box;
+            display: box;
+            -webkit-box-orient: horizontal;
+            -moz-box-orient: horizontal;
+            box-orient: horizontal;
+            -webkit-box-pack: center;
+            -moz-box-pack: center;
+            box-pack: center;
+            -webkit-box-align: center;
+            -moz-box-align: center;
+            box-align: center;
+            color: #ffffff;
+            text-align: center;
+            cursor: pointer;
+        }
+
+        a {
+            color: skyblue;
+        }
+        /*帮助样式*/
+
+        #footer {
+            width: 100%;
+            margin: 4em auto;
+            text-align: center;
+            position: absolute;
+            top: 0;
+        }
+        strong {
+            color: red;
+        }
+    </style>
+    <script src="js/three.min.js"></script>
+
+    <script src="js/Detector.js"></script>
+    <script src="js/stats.min.js"></script>
+
+    <script src="fonts/helvetiker_regular.typeface.js"></script>
+    <script src="js/controls/FlyControls.js"></script>
+
+    <!--<script src="js/shaders/CopyShader.js"></script>
+    <script src="js/shaders/FilmShader.js"></script>
+
+    <script src="js/libs/dat.gui.min.js"></script>
+    <script src="js/crossfade/scenes.js"></script>
+    <script src="js/crossfade/gui.js"></script>-->
+   <!--// <script src="js/crossfade/transition.js"></script>-->
+
+
+    <!--<script src="js/postprocessing/EffectComposer.js"></script>
+    <script src="js/postprocessing/ShaderPass.js"></script>
+    <script src="js/postprocessing/MaskPass.js"></script>
+    <script src="js/postprocessing/RenderPass.js"></script>
+    <script src="js/postprocessing/FilmPass.js"></script>-->
+
+    <script src="js/controls/TrackballControls.js"></script>
+    <script src="OrbitControls.js"></script>
+    <script src="FirstPersonControls.js"></script>
+    <script src="lockpoint.js"></script>
+</head>
+<body>
+    <!--地面控制提示-->
+    <div id="blocker">
+
+        <div id="instructions">
+            <span style="font-size:40px">按任意键开始</span>
+            <br />
+            (W, A, S, D = 移动, SPACE = 跳, MOUSE = 方向)
+        </div>
+
+    </div>
+    <!--帮助-->
+    <div id="footer">
+        press <strong>h</strong> to toggle hemisphere light, <strong>d</strong> to toggle directional light
+    </div>
+
+    <!--地面控制提示用-->
+    <script type="x-shader/x-vertex" id="vertexShader">
+
+        varying vec3 vWorldPosition;
+
+        void main() {
+
+        vec4 worldPosition = modelMatrix * vec4( position, 1.0 );
+        vWorldPosition = worldPosition.xyz;
+
+        gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+
+        }
+
+    </script>
+
+    <script type="x-shader/x-fragment" id="fragmentShader">
+
+        uniform vec3 topColor;
+        uniform vec3 bottomColor;
+        uniform float offset;
+        uniform float exponent;
+
+        varying vec3 vWorldPosition;
+
+        void main() {
+
+        float h = normalize( vWorldPosition + offset ).y;
+        gl_FragColor = vec4( mix( bottomColor, topColor, max( pow( h, exponent ), 0.0 ) ), 1.0 );
+
+        }
+
+    </script>
+ 
+
+    <script>
+        //检测是否支持weggl
+        if (!Detector.webgl) Detector.addGetWebGLMessage();
+
+       //全局变量
+        var renderer;//渲染器
+        var containernum = 300;//随机箱数量 
+        var yardnumx = 2, yardnumy = 2;//街数量
+        var time = Date.now();//开始时间
+        var stats;//统计信息
+        var projector, objects = [];//存放可以选中的对象
+        var mkviewport;//当前页面
+        var lockcontrols, flycontrols, ray, trackcontrols, firstcontrols;//交互用控制器
+        
+        var camera, cameramove, cameranormal, camerapers, lockcamera, camerafirst, lockcamera, camerafirst; //各种状态用到的相机
+        var showmode = "pointlock";//状态对应按钮
+        var clock = new THREE.Clock();//计时器
+       
+        var maxx = 0, maxy = 0;//生成堆场的的长、宽
+        var scene, scenemove, scenenormal, scenepers, scenelock, scenefirst;//场景
+
+        //街参数
+        var rate = 0.05;
+        var allrate = 1;
+        var containerlength = 570;
+        var containerwidth = 220;
+        var containerheight = 220;
+        var streetdisx = 30;
+        var streetdisy = 30;
+        var streettwodis = 10;
+        var streetdata;
+
+        //设置各种状态下的相机
+        function initCamera() {
+
+            lockcamera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 100000);
+            lockcamera.up.x = 0;
+            lockcamera.up.y = 0;
+            lockcamera.up.z = 1;
+            lockcamera.lookAt({ x: 500, y: 1, z: 0 });
+
+            cameranormal = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 1, 20000);
+            cameranormal.position.set(2, 4, 500);
+            cameranormal.up.x = 0;
+            cameranormal.up.y = 0;
+            cameranormal.up.z = 1;
+
+
+            camerafirst = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 20000);
+            camerafirst.position.set(2, 4, 500);
+            camerafirst.up.x = 0;
+            camerafirst.up.y = 0;
+            camerafirst.up.z = 1;
+            camerafirst.lookAt({ x: 0, y: 1, z: 0 });
+
+            cameraorbit = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 20000);
+            cameraorbit.position.set(2, 4, 500);
+            cameraorbit.up.x = 0;
+            cameraorbit.up.y = 0;
+            cameraorbit.up.z = 1;
+            cameraorbit.lookAt({ x: 0, y: 1, z: 0 });
+
+            camerapers = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 1, 10000);
+
+            cameramove = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 1, 20000);
+            cameramove.position.set(500, 500, 500);
+            cameramove.up.x = 0;
+            cameramove.up.y = 0;
+            cameramove.up.z = 1;
+            cameramove.lookAt({ x: 0, y: 0, z: 0 });
+
+            if (showmode == "normalpath") {
+                camera = cameranormal;
+                
+            }
+            else if (showmode == "pointlock") {
+                camera = lockcamera;
+                
+            }
+            else if (showmode == "firstcontrols") {
+
+                camera = camerafirst;
+                
+            }
+            else if (showmode == "orbitcontrols") {
+                camera = cameraorbit;
+                
+            }
+            else {
+                camera = cameramove;
+                
+            }
+
+
+
+ 
+        }
+
+        
+       
+        //初始化场景
+        function initScene() {
+            scene = new THREE.Scene();
+            scene.fog = new THREE.Fog(0xcce0ff, 500, 10000);
+
+   
+ 
+        }
+        
+
+        //初始化光源
+        
+        function initLight() {
+            var light;
+            light = new THREE.DirectionalLight(0xff0000, 1.0, 0); //设置平行光源
+            light.position.set(200, 200, 50);    //设置光源向量
+            scene.add(light);   //追加光源到场景
+
+            var light, materials;
+
+            scene.add(new THREE.AmbientLight(0x666666));
+
+            light = new THREE.DirectionalLight(0xdfebff, 1.75);
+            light.position.set(50, 200, 500);
+            light.position.multiplyScalar(1.3);
+
+            light.castShadow = true;
+
+
+            light.shadowMapWidth = 2048;
+            light.shadowMapHeight = 2048;
+
+            var d = 300;
+
+            light.shadowCameraLeft = -d;
+            light.shadowCameraRight = d;
+            light.shadowCameraTop = d;
+            light.shadowCameraBottom = -d;
+
+            light.shadowCameraFar = 1000;
+            light.shadowDarkness = 0.5;
+
+            scene.add(light);
+
+            light = new THREE.DirectionalLight(0x3dff0c, 0.35);
+            light.position.set(0, -1, 0);
+
+            scene.add(light);
+        }
+
+        //初始化控制器
+        function initcontrols() {
+            flycontrols = new THREE.FlyControls(cameramove);
+
+            flycontrols.movementSpeed = 500;
+            flycontrols.domElement = mkviewport;
+            flycontrols.rollSpeed = Math.PI / 24;
+            flycontrols.autoForward = false;
+            flycontrols.dragToLook = false;
+
+            firstcontrols = new THREE.FirstPersonControls(camerafirst);
+            firstcontrols.movementSpeed = 1000;
+            firstcontrols.lookSpeed = 0.1;
+
+            orbitcontrols = new THREE.OrbitControls(cameraorbit);
+            orbitcontrols.center.set(0.0, 0, 100);
+            orbitcontrols.userPanSpeed = 100;
+
+            ray = new THREE.Raycaster();
+            ray.ray.direction.set(0, 0, -1);
+            lockcontrols = new THREE.PointerLockControls(lockcamera);
+            // controls.
+            scene.add(lockcontrols.getObject());
+
+            trackcontrols = new THREE.TrackballControls(camerapers);
+            trackcontrols.target.x = 150;
+            trackcontrols.target.y = 50;
+
+            //var renderModel = new THREE.RenderPass(scene, cameramove);
+            //var effectFilm = new THREE.FilmPass(0.35, 0.75, 2048, false);
+
+            //effectFilm.renderToScreen = true;
+
+            //composer = new THREE.EffectComposer(renderer);
+
+            //composer.addPass(renderModel);
+            //composer.addPass(effectFilm);
+
+            //var geometry = new THREE.BufferGeometry();
+            //geometry.addAttribute('position', Float32Array, 4, 3);
+
+            //var material = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 2, transparent: true });
+            //line = new THREE.Line(geometry, material);
+            //scene.add(line);
+
+            //raycaster = new THREE.Raycaster();
+        }
+
+        //增加测试街数据
+        function addteststreet() {
+
+            
+            streetdata = [];
+            for (var j = 0; j < yardnumx; j++) {
+                for (var i = 0; i < yardnumy; i++) {
+                    var k = { x: j * 340, y: i * 150, rows: 10, cols: 10, title: "A" + i };
+                    streetdata.push(k);
+                }
+            }
+        }
+        //增加集装箱用材质
+        var ms = ["c", "t", "n", "h", "g", "e"];
+        var cmaterials = [];
+        //var cmaterials = [new THREE.MeshFaceMaterial(m1), new THREE.MeshFaceMaterial(m2)];
+        for (var n = 0; n < ms.length; n++) {
+            var m1 = [];
+            for (var u = 0; u < 2; u++) {
+                m1.push(new THREE.MeshLambertMaterial({
+                    ambient: 0xffffff,
+                    map: THREE.ImageUtils.loadTexture('textures/' + ms[n] + '1.jpg')
+                }));
+            }
+            for (var u = 0; u < 4; u++) {
+                m1.push(new THREE.MeshLambertMaterial({
+                    ambient: 0xffffff,
+                    map: THREE.ImageUtils.loadTexture('textures/' + ms[n] + '3.jpg')
+                }));
+            }
+            cmaterials.push(new THREE.MeshFaceMaterial(m1));
+        }
+        
+        //增加测试集装箱数据
+        function addtestcontainer() {
+
+            var num = containernum;
+          
+            var geometry = new THREE.BoxGeometry((containerlength * rate) * allrate - 2, (containerwidth * rate) * allrate - 2, containerheight * rate * allrate - 1
+                , 1, 1, 1);
+            
+            containes = [];
+            objects = [];
+            for (var i = 0; i < num; i++) {
+                var st = streetdata[Math.floor(Math.random() * (streetdata.length))];
+                var rows = st.rows;
+                var cols = st.cols;
+                var row = Math.floor(Math.random() * (rows));
+                var col = Math.floor(Math.random() * (cols));
+                var layer = Math.floor(Math.random() * 5 + 1);
+                for (var k = 0; k < layer; k++) {
+                    cmaterials
+                    var cube = new THREE.Mesh(geometry, cmaterials[Math.floor(Math.random() * (cmaterials.length))]);
+                  
+                    cube.position.x = (st.x + col * containerlength * rate + containerlength * rate / 2) * allrate + 1;
+                    cube.position.z = (containerheight * rate * k - -containerwidth * rate / 2) * allrate;
+                    cube.position.y = (st.y - row * containerwidth * rate - containerwidth * rate / 2) * allrate + 1;
+                    scene.add(cube);
+                    objects.push(cube);
+                }
+                i = i + layer - 1;
+
+
+
+            }
+
+        }
+        //初始化街
+        function inityard() {
+
+            //绘制堆场底图
+            var geometry = new THREE.BoxGeometry(maxx * allrate + 60, maxy * allrate + 60, 1, 1, 1, 1);
+            mymaterials[2].specularMap.repeat.x = maxx * allrate / 100;
+            mymaterials[2].specularMap.repeat.y = maxy * allrate / 100;
+         
+            var mesh = new THREE.Mesh(geometry, mymaterials[2]);
+
+            mesh.position.z = -1;
+
+            mesh.position.y = 15;
+            mesh.position.x = 15;
+      
+            scene.add(mesh);
+            //便利街，绘制
+            for (var i = 0; i < streetdata.length; i++) {
+
+                var street = streetdata[i];
+                scene.add(drawstreet(street));
+
+            }
+
+
+        }
+        //计算街的矢量坐标
+        function calxy() {
+            //求场站中最大x,y
+            for (var i = 0; i < streetdata.length; i++) {
+
+                var street = streetdata[i];
+                var x = street.x;
+                var y = street.y;
+                var rows = street.rows;
+                var cols = street.cols;
+                var title = street.title;
+                var totalx = containerlength * cols * rate;
+                var totaly = containerwidth * rows * rate;
+
+                if (maxx < x + totalx)
+                    maxx = x + totalx;
+                if (maxy < y + totaly)
+                    maxy = y + totaly;
+            }
+            //计算放大比率
+            rate1 = window.innerWidth / maxx;
+            rate2 = window.innerHeight / maxy;
+            allrate = (rate1 < rate2) ? rate1 : rate2;
+            //计算每条街的x,y
+            for (var i = 0; i < streetdata.length; i++) {
+
+                var street = streetdata[i];
+                street.x = street.x - maxx / 2;
+                street.y = maxy / 2 - street.y;
+            }
+        }
+        //控制器改变点击事件处理
+        function buttonclick(info1, text) {
+            if (text == null)
+                text = "";
+            //得到帮助ID
+            var footer = document.getElementById("footer");
+            showmode = info1;
+           
+            // instructions.style.display = 'none';
+            unlock();
+
+            if (showmode == "normalpath") {
+                footer.innerHTML = ' <strong>' + text + '</strong> 没有界面交互';//更新帮助
+                //transition = new Transition(camera, scenenormal);
+                camera = cameranormal;
+                
+            }
+            else if (showmode == "firstcontrols") {
+                footer.innerHTML = ' <strong>' + text + '</strong>  移动<strong>鼠标</strong>方向随之变化,按<strong>A|D 或左右箭头</strong>控制左右移动,按<strong>W|S 或上下箭头</strong>控制前进后退，按<strong>鼠标左右键</strong>接近远离目标，按<strong>R|F</strong>控制上下移动';
+                //transition = new Transition(camera, scenefirst);
+                camera = camerafirst;
+
+                camerafirst.position.set(2, 4, 100);
+                camerafirst.up.x = 0;
+                camerafirst.up.y = 0;
+                camerafirst.up.z = 1;
+                camerafirst.lookAt({ x: 0, y: 1, z: 0 });
+            }
+            else if (showmode == "orbitcontrols") {
+                footer.innerHTML = ' <strong>' + text + '</strong>  按住<strong>鼠标左键</strong>拖动旋转,按住<strong>鼠标右键</strong>拖动平移,<strong>滚轮</strong>前进或后退,按<strong> 或左右箭头</strong>控制左右移动,按<strong> 或上下箭头</strong>控制前进后退';
+                //transition = new Transition(camera, scenepers);
+                         camera = cameraorbit;
+                cameraorbit.position.set(2, 4, 100);
+                cameraorbit.up.x = 0;
+                cameraorbit.up.y = 0;
+                cameraorbit.up.z = 1;
+                cameraorbit.lookAt({ x: 0, y: 1, z: 0 });
+            }
+
+
+            else if (showmode == "topview") {
+                footer.innerHTML = ' <strong>' + text + '</strong>  按住<strong>鼠标左键</strong>拖动旋转,按住<strong>鼠标右键</strong>拖动平移,<strong>滚轮</strong>前进或后退';
+
+                camera = camerapers;
+
+                camerapers.position.x = 0
+                camerapers.position.y = 0;
+                camerapers.position.z = 700;
+                camerapers.up.x = 0;
+                camerapers.up.y = 0;
+                camerapers.up.z = 0;
+
+                camerapers.lookAt(new THREE.Vector3(0, 0, 0));
+
+            }
+            else if (showmode == "leftview") {
+                footer.innerHTML = ' <strong>' + text + '</strong>  按住<strong>鼠标左键</strong>拖动旋转,按住<strong>鼠标右键</strong>拖动平移,<strong>滚轮</strong>前进或后退';
+
+                camera = camerapers;
+                
+                camerapers.position.x = -window.innerWidth / 2
+                camerapers.position.y = 0;
+                camerapers.position.z = 200;
+                camerapers.up.x = 0;
+                camerapers.up.y = 0;
+                camerapers.up.z = 1;
+                camerapers.lookAt(new THREE.Vector3(0, 0, 0));
+            }
+            else if (showmode == "frontview") {
+                footer.innerHTML = ' <strong>' + text + '</strong>  按住<strong>鼠标左键</strong>拖动旋转,按住<strong>鼠标右键</strong>拖动平移,<strong>滚轮</strong>前进或后退';
+                camera = camerapers;
+                camerapers.position.x = 0;
+                camerapers.position.y = -window.innerHeight / 2;
+                camerapers.position.z = 200;
+                camerapers.up.x = 0;
+                camerapers.up.y = 0;
+                camerapers.up.z = 1;
+                camerapers.lookAt(new THREE.Vector3(0, 0, 0));
+            }
+            else if (showmode == "pointlock") {
+                footer.innerHTML = ' <strong>' + text + '</strong>  移动<strong>鼠标</strong>视角随之变化,按<strong>A|D</strong>控制左右移动,按<strong>W|S</strong>控制前进后退，按<strong>空格</strong>向上跳起，如果下落过程遇到箱，将停到箱上';
+             
+                //transition = new Transition(camera, scenelock);
+                camera = lockcamera;
+                pointlock();
+               
+            }
+            else {
+                footer.innerHTML = ' <strong>' + text + '</strong>  移动<strong>鼠标</strong>方向随之变化,按<strong>A|D</strong>控制左右移动,按<strong>W|S</strong>控制前进后退，按<strong>R|F</strong>控制上移下移，按<strong>Q|E</strong>控制左右旋转';
+                //transition = new Transition(camera, scenemove);
+                camera = cameramove;
+
+
+            }
+
+        }
+       
+        //绘制一条街
+        function drawstreet(street) {
+            var x = street.x * allrate;
+            var y = street.y * allrate;
+            var rows = street.rows;
+            var cols = street.cols;
+            var title = street.title;
+            var totalx = containerlength * cols * rate * allrate;
+            var totaly = containerwidth * rows * rate * allrate;
+            var maxx = maxy = 0;
+            if (maxx < x + totalx)
+                maxx = x + totalx;
+            if (maxy < y + totaly)
+                maxy = y + totaly;
+
+
+            //街底图
+            var group = new THREE.Object3D();
+            group.position.z = 1;
+            group.position.x = x;
+            group.position.y = y;
+            var rectShape = new THREE.Shape();
+            rectShape.moveTo(0, 0);
+            rectShape.lineTo(totalx, 0);
+            rectShape.lineTo(totalx, -totaly);
+            rectShape.lineTo(0, -totaly);
+            rectShape.lineTo(0, 0);
+          
+            
+
+
+            var geometry = new THREE.BoxGeometry(totalx, totaly, 1, 1, 1, 1);
+            mymaterials[1].specularMap.repeat.x = totalx * allrate / 75;
+            mymaterials[1].specularMap.repeat.y = totaly * allrate / 75;
+            var mesh = new THREE.Mesh(geometry, mymaterials[1]);
+
+
+            mesh.position.x = (totalx / 2);
+
+            mesh.position.y = -totaly / 2
+            group.add(mesh);
+            // 底图框线
+
+            var geometry = rectShape.createPointsGeometry();
+            var material = new THREE.LineBasicMaterial({ linewidth: 10, color: 0x333333, transparent: true });
+
+            var line = new THREE.Line(geometry, material);
+
+
+            //街标题
+
+            var text3d = new THREE.TextGeometry(title, {
+
+                size: 10,
+                height: 0,
+                // curveSegments: 2,
+                font: "helvetiker"
+
+            });
+
+            var textMaterial = new THREE.MeshBasicMaterial({ color: 0x00ffff, overdraw: true });
+            text = new THREE.Mesh(text3d, textMaterial);
+            text.position.z = 0;
+            text.position.y = 0;
+
+            group.add(text);
+
+            //行列线
+            var streetbottom = 1;
+
+
+            var geometry = new THREE.Geometry();
+            for (var i = 0; i <= rows; i++) {
+                geometry.vertices.push(new THREE.Vector3(0, -i * containerwidth * rate * allrate, streetbottom));
+                geometry.vertices.push(new THREE.Vector3(totalx, -i * containerwidth * rate * allrate, streetbottom));
+            }
+            for (var i = 0; i <= cols; i++) {
+                geometry.vertices.push(new THREE.Vector3(i * containerlength * rate * allrate, 0, streetbottom));
+                geometry.vertices.push(new THREE.Vector3(i * containerlength * rate * allrate, -totaly, streetbottom));
+            }
+
+            var material = new THREE.LineBasicMaterial({ color: 0x000000, opacity: 0.2 });
+
+            var line = new THREE.Line(geometry, material);
+            line.type = THREE.LinePieces;
+            group.add(line);
+            return group;
+
+        }
+        //初始化渲染器
+        function init3d() {
+
+            info = document.createElement('div');
+            info.style.position = 'absolute';
+            info.style.top = '10px';
+            info.style.width = '100%';
+            info.style.textAlign = 'center';
+            info.innerHTML = 'Drag to spin the geometry ';
+            info.innerHTML = ' ' +
+
+            // '<br><br>Subdivisions: ' + subdivisions +
+
+             //'街平行数: <input type="text" width="10" name="yardnumx" value="2" /> 街垂直数: <input type="text" name="yardnumy" value="2" /> 箱数 <input type="text" name="containernum" value="50"/>' +
+             //'<button type="button" onclick="changeclick(\'changenum\'); return false;">确定</button>' +
+             '<button type="button" onclick="buttonclick(\'normalpath\',\'旋转\'); return false;">旋转</button>' +
+             '<button type="button" onclick="buttonclick(\'orbitcontrols\',\'旋转控制\'); return false;">旋转控制</button><button type="button" onclick="buttonclick(\'pointlock\',\'地面控制\'); return false;">地面控制</button><button type="button" onclick="buttonclick(\'firstcontrols\',\'位置控制\'); return false;">位置控制</button>' +
+                '<button type="button" onclick="buttonclick(\'2dmove\',\'飞鸟控制\'); return false;">飞鸟控制</button><button type="button" onclick="buttonclick(\'topview\',\'俯视图\'); return false;">俯视图</button>' +
+                '<button type="button" onclick="buttonclick(\'frontview\',\'前视图\'); return false;">前视图</button><button type="button" onclick="buttonclick(\'leftview\',\'左视图\'); return false;">左视图</button>';
+
+            document.body.appendChild(info);
+
+            mkviewport = document.createElement('div');
+            document.body.appendChild(mkviewport);
+
+            width = mkviewport.clientWidth;   //获取画布的宽
+            height = mkviewport.clientHeight; //获取画布的高
+            renderer = new THREE.WebGLRenderer({ antialias: true });    //生成渲染器对象，锯齿效果设置为有效
+
+
+            renderer.setClearColor(0xf0f0f0);
+            renderer.setSize(window.innerWidth, window.innerHeight);//设置渲染器的高宽
+            renderer.gammaInput = true;
+            renderer.gammaOutput = true;
+
+            mkviewport.appendChild(renderer.domElement); //追加canvas元素到canvas3d元素中
+
+            window.addEventListener('resize', onWindowResize, false);
+            projector = new THREE.Projector();
+            document.addEventListener('mousedown', onDocumentMouseDown, false);
+            mkviewport.addEventListener('mousemove', onMouseMove, false);
+            //webgl信息
+            stats = new Stats();
+            stats.domElement.style.position = 'absolute';
+            stats.domElement.style.top = '0px';
+           
+            mkviewport.appendChild(stats.domElement);
+
+        }
+        var shouldSphereFollowMouse = true;
+        var mouse = new THREE.Vector2();
+        //鼠标移动事件
+        function onMouseMove(event) {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            if (shouldSphereFollowMouse) {
+
+                var mouseX = (event.clientX / window.innerWidth) * 2 - 1;
+                var mouseY = -(event.clientY / window.innerHeight) * 2 + 1;
+
+                var vector = new THREE.Vector3(mouseX, mouseY, camera.near);
+
+               
+                var projector = new THREE.Projector();
+                projector.unprojectVector(vector, cameraorbit);
+
+                var raycaster = new THREE.Raycaster(cameraorbit.position, vector.sub(cameraorbit.position).normalize());
+
+               
+                var intersects = raycaster.intersectObject(objects);
+                lastIntersects = intersects;
+
+               
+                if (intersects.length > 0) {
+
+                    helper.position.set(0, 0, 0);
+                    helper.lookAt(intersects[0].face.normal);
+
+                    helper.position.copy(intersects[0].point);
+
+                }
+            }
+        }
+        //鼠标单击事件
+        function onDocumentMouseDown(event) {
+            if (showmode == "topview" || showmode == "leftview" || showmode == "frontview") {
+                event.preventDefault();
+
+                var vector = new THREE.Vector3((event.clientX / window.innerWidth) * 2 - 1, -(event.clientY / window.innerHeight) * 2 + 1, 0.5);
+             
+                projector.unprojectVector(vector, camera);
+
+                var raycaster = new THREE.Raycaster(camera.position, vector.sub(camera.position).normalize());
+
+                var intersects = raycaster.intersectObjects(objects);
+
+                if (intersects.length > 0) {
+                    var texture = THREE.ImageUtils.loadTexture('textures/crate.gif');
+                    texture.anisotropy = renderer.getMaxAnisotropy();
+
+                    var material = new THREE.MeshBasicMaterial({ map: texture });
+                   
+                    intersects[0].object.material = material;
+                    intersects[0].object.needsUpdate = true;
+                 
+
+                }
+            }
+
+        }
+        function refresh() {
+            clearScene();
+            //test();//测试数据
+            //calxy();//计算坐标
+            //draw();//绘制街
+            //testcontainer();
+        }
+        //清空场景内所有图标
+        function clearScene() {
+            //var objsToRemove = _.rest(scene.children, 1);
+            for (var k = scene.children.length - 1; k <= 0; k++) {
+                obj = scene.children[k];
+                if (obj !== camera) {
+                    scene.remove(obj);
+                }
+               
+            }
+
+        }
+        //初始化场图
+        var loader = new THREE.JSONLoader();
+        var mymaterials;
+        var callback = function (geometry, materials) { mymaterials = materials; init(); };
+        loader.load("obj/lightmap/lightmap.js", callback);
+
+        var raycaster;
+        function init() {
+            addteststreet();//测试街数据
+            calxy();//计算坐标
+            //initGUI();
+            init3d();//初始化渲染器
+            initCamera();//初始化相机
+            initScene();//初始化场景
+
+            //相机帮助
+            //cameraPerspectiveHelper = new THREE.CameraHelper(camera);
+            //scene.add(cameraPerspectiveHelper);
+           
+            initLight();//初始化灯光
+            initsky();//初始化天空
+            initground();//初始化地面
+            initcontrols();//初始化控制器
+            inityard();//绘制街
+            addtestcontainer(30);//增加测试集装箱
+            
+            //克隆多个场景
+            scenemove = scene.clone();
+            scenenormal = scene.clone();
+            scenepers = scene.clone();
+            scenelock = scene.clone();
+            scenefirst = scene.clone();
+            buttonclick(showmode);
+         
+            animate();//动画
+
+        }
+        //执行动画效果
+        function animate() {
+
+
+            if (showmode == "pointlock") {
+                requestAnimationFrame(animate);
+                lockcontrols.isOnObject(false);
+
+                ray.ray.origin.copy(lockcontrols.getObject().position);
+                ray.ray.origin.z -= 10;
+
+                var intersections = ray.intersectObjects(objects);
+
+                if (intersections.length > 0) {
+
+                    var distance = intersections[0].distance;
+
+                    if (distance > 0 && distance < 10) {
+
+                        lockcontrols.isOnObject(true);
+
+                    }
+
+                }
+
+                lockcontrols.update((Date.now() - time) * 30);
+
+                renderer.render(scene, camera);
+
+                time = Date.now();
+            }
+            else {
+                requestAnimationFrame(animate);
+
+                render();
+                stats.update();
+            }
+
+        }
+        //初始化天空
+        function initsky() {
+            var hemiLight = new THREE.HemisphereLight(0xffffff, 0xffffff, 1.25);
+            hemiLight.color.setHSL(0.6, 1, 0.75);
+            hemiLight.groundColor.setHSL(0.1, 0.8, 0.7);
+            hemiLight.position.z = 1000;
+            scene.add(hemiLight);
+
+            var vertexShader = document.getElementById('vertexShader').textContent;
+            var fragmentShader = document.getElementById('fragmentShader').textContent;
+            var uniforms = {
+                topColor: { type: "c", value: new THREE.Color(0x0077ff) },
+                bottomColor: { type: "c", value: new THREE.Color(0xffffff) },
+                offset: { type: "f", value: 400 },
+                exponent: { type: "f", value: 0.6 }
+            }
+            uniforms.topColor.value.copy(hemiLight.color);
+
+            scene.fog.color.copy(uniforms.bottomColor.value);
+
+            var skyGeo = new THREE.SphereGeometry(10000, 100, 100);
+            var skyMat = new THREE.ShaderMaterial({ vertexShader: vertexShader, fragmentShader: fragmentShader, uniforms: uniforms, side: THREE.BackSide });
+
+            var sky = new THREE.Mesh(skyGeo, skyMat);
+            scene.add(sky);
+
+        }
+      //  var transition;
+        //渲染
+        function render() {
+           // transition.render(clock.getDelta());
+            var time = Date.now() * 0.001;
+
+
+            //var vector = new THREE.Vector3(mouse.x, mouse.y, 1);
+            //projector.unprojectVector(vector, camera);
+
+            //raycaster.set(camera.position, vector.sub(camera.position).normalize());
+
+            //var intersects = raycaster.intersectObject(objects);
+
+
+
+            //if (intersects.length > 0) {
+            //    console.log(intersects);
+            //    var intersect = intersects[0];
+
+            //    var object = intersect.object;
+            //    var positions = object.geometry.attributes.position.array;
+
+            //    for (var i = 0, j = 0; i < 4; i++, j += 3) {
+
+            //        var index = intersect.indices[i % 3] * 3;
+
+            //        line.geometry.attributes.position.array[j] = positions[index];
+            //        line.geometry.attributes.position.array[j + 1] = positions[index + 1];
+            //        line.geometry.attributes.position.array[j + 2] = positions[index + 2];
+
+            //    }
+
+            //    mesh.updateMatrix();
+
+            //    line.geometry.applyMatrix(mesh.matrix);
+
+            //    line.visible = true;
+
+            //} else {
+
+            //    line.visible = false;
+
+            //}
+
+            //如果动画开关打开，绕z轴旋转漫游
+            if (showmode == "normalpath") {
+                camera = cameranormal;
+
+                var timer = Date.now() * 0.00005;
+
+                camera.position.x = Math.cos(timer) * 500;
+                camera.position.y = Math.sin(timer) * 500;
+                camera.position.z = 1000;
+
+                camera.lookAt(scene.position);
+
+            }
+            else if (showmode == "topview" || showmode == "leftview" || showmode == "frontview") {
+                camera = camerapers;
+                var delta = clock.getDelta();
+                trackcontrols.update(delta);
+
+            }
+                
+            else if (showmode == "pointlock") {
+                return;
+            }
+            else if (showmode == "orbitcontrols") {
+                orbitcontrols.update(clock.getDelta());
+            }
+            else if (showmode == "firstcontrols") {
+                firstcontrols.update(clock.getDelta());
+            }
+            else {
+                camera = cameramove;
+                // camera.lookAt(scene.position);
+                var delta = clock.getDelta();
+                flycontrols.movementSpeed = 100;
+                flycontrols.update(delta);
+
+                renderer.clear();
+               // composer.render(delta);
+
+            }
+            renderer.render(scene, camera);
+
+        }
+        //初始化地面
+        function initground() {
+            var initColor = new THREE.Color(0x497f13);
+            var initTexture = THREE.ImageUtils.generateDataTexture(1, 1, initColor);
+
+            var groundMaterial = new THREE.MeshPhongMaterial({ color: 0xffffff, specular: 0x111111, map: initTexture });
+
+            var groundTexture = THREE.ImageUtils.loadTexture("textures/grasslight-big.jpg", undefined, function () { groundMaterial.map = groundTexture });
+            groundTexture.wrapS = groundTexture.wrapT = THREE.RepeatWrapping;
+            groundTexture.repeat.set(300, 300);
+            groundTexture.anisotropy = 16;
+
+            var mesh = new THREE.Mesh(new THREE.PlaneGeometry(200000, 200000), groundMaterial);
+            mesh.position.z = -5;
+            // mesh.rotation.x = -Math.PI / 2;
+            mesh.receiveShadow = true;
+            scene.add(mesh);
+        }
+        //如果窗口大小改变
+        function onWindowResize() {
+
+            camera.left = window.innerWidth / -2;
+            camera.right = window.innerWidth / 2;
+            camera.top = window.innerHeight / 2;
+            camera.bottom = window.innerHeight / -2;
+
+            camera.updateProjectionMatrix();
+
+            renderer.setSize(window.innerWidth, window.innerHeight);
+
+        }
+        var instructions;
+        function unlock() {
+            var blocker = document.getElementById('blocker');
+            var instructions = document.getElementById('instructions');
+            blocker.style.display = 'none';
+
+        }
+        //地面控制，加锁屏幕
+        function pointlock() {
+            var blocker = document.getElementById('blocker');
+            var instructions = document.getElementById('instructions');
+
+            var havePointerLock = 'pointerLockElement' in document || 'mozPointerLockElement' in document || 'webkitPointerLockElement' in document;
+
+            if (havePointerLock) {
+
+                var element = document.body;
+                blocker.style.display = '';
+                var pointerlockchange = function (event) {
+
+                    if (document.pointerLockElement === element || document.mozPointerLockElement === element || document.webkitPointerLockElement === element) {
+
+                        lockcontrols.enabled = true;
+
+                        blocker.style.display = 'none';
+
+                    } else {
+
+                        lockcontrols.enabled = false;
+
+                        blocker.style.display = '-webkit-box';
+                        blocker.style.display = '-moz-box';
+                        blocker.style.display = 'box';
+
+                        instructions.style.display = '';
+
+                    }
+
+                }
+
+                var pointerlockerror = function (event) {
+
+                    instructions.style.display = '';
+
+                }
+
+                // Hook pointer lock state change events
+                document.addEventListener('pointerlockchange', pointerlockchange, false);
+                document.addEventListener('mozpointerlockchange', pointerlockchange, false);
+                document.addEventListener('webkitpointerlockchange', pointerlockchange, false);
+
+                document.addEventListener('pointerlockerror', pointerlockerror, false);
+                document.addEventListener('mozpointerlockerror', pointerlockerror, false);
+                document.addEventListener('webkitpointerlockerror', pointerlockerror, false);
+
+                instructions.addEventListener('click', function (event) {
+
+                    instructions.style.display = 'none';
+
+                    // Ask the browser to lock the pointer
+                    element.requestPointerLock = element.requestPointerLock || element.mozRequestPointerLock || element.webkitRequestPointerLock;
+
+                    if (/Firefox/i.test(navigator.userAgent)) {
+
+                        var fullscreenchange = function (event) {
+
+                            if (document.fullscreenElement === element || document.mozFullscreenElement === element || document.mozFullScreenElement === element) {
+
+                                document.removeEventListener('fullscreenchange', fullscreenchange);
+                                document.removeEventListener('mozfullscreenchange', fullscreenchange);
+
+                                element.requestPointerLock();
+                            }
+
+                        }
+
+                        document.addEventListener('fullscreenchange', fullscreenchange, false);
+                        document.addEventListener('mozfullscreenchange', fullscreenchange, false);
+
+                        element.requestFullscreen = element.requestFullscreen || element.mozRequestFullscreen || element.mozRequestFullScreen || element.webkitRequestFullscreen;
+
+                        element.requestFullscreen();
+
+                    } else {
+
+                        element.requestPointerLock();
+
+                    }
+
+                }, false);
+
+            } else {
+
+                instructions.innerHTML = 'Your browser doesn\'t seem to support Pointer Lock API';
+
+            }
+        }
+        //测试用
+        function addpoint(x, y, z) {
+            var group = new THREE.Object3D();
+            group.position.y = 0;
+
+            //scene.add(group);
+            var circleRadius = 40;
+            var circleShape = new THREE.Shape();
+            circleShape.moveTo(0, circleRadius);
+            circleShape.quadraticCurveTo(circleRadius, circleRadius, circleRadius, 0);
+            circleShape.quadraticCurveTo(circleRadius, -circleRadius, 0, -circleRadius);
+            circleShape.quadraticCurveTo(-circleRadius, -circleRadius, -circleRadius, 0);
+            circleShape.quadraticCurveTo(-circleRadius, circleRadius, 0, circleRadius);
+
+            var geometry = new THREE.ShapeGeometry(circleShape);
+            var material = new THREE.MeshBasicMaterial({ color: 0xffaa00, overdraw: true });
+
+            var mesh = new THREE.Mesh(geometry, material);
+            mesh.position.set(x, y, z);
+            //mesh.rotation.set(0, ry, rz);
+            //mesh.scale.set(s, s, s);
+            group.add(mesh);
+
+            // line
+
+            var geometry = circleShape.createPointsGeometry();
+            var material = new THREE.LineBasicMaterial({ linewidth: 10, color: 0x333333, transparent: true });
+
+            var line = new THREE.Line(geometry, material);
+            line.position.set(x, y, z);
+            //line.rotation.set(rx, ry, rz);
+            //line.scale.set(s, s, s);
+            group.add(line);
+            return group;
+        }
+
+    </script>
+
+
+
+</body>
+
+</html>
